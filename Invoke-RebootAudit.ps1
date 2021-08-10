@@ -9,14 +9,6 @@
 .PARAMETER ComputerName
     The device to investigate.
 
-.PARAMETER Start
-    Optional. Start date for EventLogs. 
-    If missing Start is last 24 hours.
-
-.PARAMETER End
-    Optional. End date for EventLogs. 
-    If missing End is current date.
-
 .PARAMETER LogTail
     Optional. Number of lines to display from end of .log files.
     Does not apply to Eventlogs.
@@ -31,7 +23,7 @@
         File Name: Invoke-RebootAudit.ps1
         Author: keyboardcrunch
         Date Created: 28/02/18
-        Updated: 20/03/18
+        Updated: 21/08/10
 
 #>
 
@@ -63,41 +55,33 @@ If (-not(Test-Connection -ComputerName $ComputerName -Count 3 -Quiet )) {
     Exit 1
 }
 
-If (-Not($Start)) {
-    $Start = (Get-Date).AddHours(-24)   
-}
-
-If (-Not($End)) {
-    $End = Get-Date   
-}
-
 If (-Not($LogTail)) {
     $LogTail = 10  
 }
 
 Write-Host "============================ Reboot Events ============================" -ForegroundColor Yellow
-Try {
-    $EVReboot = Get-EventLog -Log System -ComputerName $ComputerName -After $Start -Before $End | Where {$_.EventID -eq 6008 -or $_.EventID -eq 1074} | Format-Table TimeGenerated, EntryType, Message -AutoSize
-    If ($EVReboot) {
-        $EVReboot
-    } Else {
-        Write-Host "None" -ForegroundColor White
-    }
-} Catch {
-    Write-Host "Skipped System Eventlog reboot query due to errors." -ForegroundColor Red
+If (-Not($ComputerName)) {
+    Get-WinEvent -FilterHashtable @{LogName="System";ID='6008','1074'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
+} Else {
+    Get-WinEvent -ComputerName $ComputerName -FilterHashtable @{LogName="System";ID='6008','1074'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
 }
 
-Write-Host "`n============================ Login  Events ============================" -ForegroundColor Yellow
-Try {
-    $EVLogin = Get-EventLog -Log Security -ComputerName $ComputerName -After $Start -Before $End | Where {$_.EventID -eq 4624 -or $_.EventID -eq 4634 -or $_.EventID -eq 4647} | Format-Table TimeGenerated, Message -AutoSize
-    If ($EVLogin) {
-        $EVLogin
-    } Else {
-        Write-Host "None" -ForegroundColor White
-    }
-} Catch {
-    Write-Host "Skipped System Eventlog reboot query due to errors." -ForegroundColor Red
+
+Write-Host "`n============================ Login Events ============================" -ForegroundColor Yellow
+If (-Not($ComputerName)) {
+    Get-WinEvent -FilterHashtable @{LogName="Security";ID='4624','4634','4647'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
+} Else {
+    Get-WinEvent -ComputerName $ComputerName -FilterHashtable @{LogName="Security";ID='4624','4634','4647'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
 }
+
+
+Write-Host "`n============================ Application Events ============================" -ForegroundColor Yellow
+If (-Not($ComputerName)) {
+    Get-WinEvent -FilterHashtable @{LogName="Application";ID='1042','10000','10001'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
+} Else {
+    Get-WinEvent -ComputerName $ComputerName -FilterHashtable @{LogName="Application";ID='1042','10000','10001'} -MaxEvents $LogTail | Format-Table TimeCreated, Id, Message -AutoSize
+}
+
 
 Write-Host "`n========================== CCM Login Events ===========================" -ForegroundColor Yellow
 Try {
@@ -111,6 +95,7 @@ Try {
     Write-Host "Skipped CCM ExecMgr.log due to errors." -ForegroundColor Red
 }
 
+
 Write-Host "`n========================= CCM Reboot Events ===========================" -ForegroundColor Yellow
 Try {
     $CCMReboot = Select-String -Path "\\$ComputerName\C$\Windows\CCM\Logs\RebootCoordinator.log" -Pattern 'Reboot initiated' | Select-Object -Last $LogTail
@@ -123,10 +108,29 @@ Try {
     Write-Host "Skipped CCM RebootCoordinator.log due to errors." -ForegroundColor Red
 }
 
+
+Write-Host "`n========================= DCM Agent Events ===========================" -ForegroundColor Yellow
+Try {
+    $DCMReboot = Select-String -Path "\\$ComputerName\C$\Windows\CCM\Logs\DCMAgen*.log" -Pattern 'Registering for Immediate reboot' | Select-Object -Last $LogTail
+    If ($DCMReboot) {
+        $DCMReboot | Write-Host -ForegroundColor White
+    } Else {
+        Write-Host "None" -ForegroundColor White
+    }
+} Catch {
+    Write-Host "Skipped DCMAgent.log due to errors." -ForegroundColor Red
+}
+
+
+
 Write-Host "`n========================= Registry Settings ===========================" -ForegroundColor Yellow
 Try {
     If ($ComputerName -eq $env:COMPUTERNAME) {
-        $DualScan = Get-ItemProperty hklm:SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate -Name DisableDualScan
+        Try {
+            $DualScan = Get-ItemProperty hklm:SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate -Name DisableDualScan -ErrorAction SilentlyContinue
+        } Catch {
+            $DualScan.DisableDualScan = 0
+        }
     } Else {
         $DualScan = Invoke-Command -ComputerName $ComputerName -ScriptBlock { $(Get-ItemProperty hklm:SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate -Name DisableDualScan) }
     }
